@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>日本国内製油所 GISコマンドセンター v5 ULTRA</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700;900&family=JetBrains+Mono:wght@400;700&display=swap');
+:root{--eneos:#f97316;--idemitsu:#ef4444;--cosmo:#3b82f6;--other:#a855f7;--emerald:#10b981;--bg:#020617;--surface:#0f172a;--panel:#1e293b;}
+*{box-sizing:border-box;}
+body{font-family:'Noto Sans JP',sans-serif;background:var(--bg);color:#e2e8f0;min-height:100vh;}
+.mono{font-family:'JetBrains Mono',monospace;}
+#map{width:100%;height:660px;border-radius:16px;z-index:1;}
+.glow-emerald{box-shadow:0 0 0 1px rgba(16,185,129,.25),0 0 24px rgba(16,185,129,.08);}
+.glow-sky{box-shadow:0 0 0 1px rgba(56,189,248,.25),0 0 24px rgba(56,189,248,.08);}
+.glow-red{box-shadow:0 0 0 1px rgba(239,68,68,.3),0 0 24px rgba(239,68,68,.1);}
+@keyframes ping-ring{0%{transform:scale(0.85);opacity:.9;}60%{transform:scale(1.35);opacity:0;}100%{transform:scale(0.85);opacity:0;}}
+.pulse-marker{animation:ping-ring 2.2s ease-out infinite;}
+@keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.3}}
+.maint-dot{width:7px;height:7px;border-radius:50%;background:#f59e0b;display:inline-block;animation:pulse-dot 1.8s infinite;}
+.risk-dot{width:7px;height:7px;border-radius:50%;background:#ef4444;display:inline-block;animation:pulse-dot 1.2s infinite;}
+#toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%) translateY(80px);transition:transform .35s cubic-bezier(.175,.885,.32,1.275),opacity .35s;opacity:0;pointer-events:none;z-index:9999;}
+#toast.show{transform:translateX(-50%) translateY(0);opacity:1;pointer-events:auto;}
+.stat-bar-track{height:4px;background:#1e293b;border-radius:99px;overflow:hidden;}
+.stat-bar-fill{height:100%;border-radius:99px;transition:width .6s ease;}
+.scroll-thin::-webkit-scrollbar{width:4px;}
+.scroll-thin::-webkit-scrollbar-track{background:transparent;}
+.scroll-thin::-webkit-scrollbar-thumb{background:#334155;border-radius:4px;}
+.refinery-card{transition:border-color .15s,background .15s;}
+.refinery-card:hover{border-color:#475569!important;}
+.refinery-card.active-card{border-color:#10b981!important;background:rgba(16,185,129,.05)!important;}
+.leaflet-popup-content-wrapper{background:#0f172a!important;border:1px solid #334155!important;border-radius:12px!important;box-shadow:0 8px 32px rgba(0,0,0,.5)!important;}
+.leaflet-popup-tip{background:#0f172a!important;}
+.leaflet-popup-content{margin:0!important;}
+.leaflet-container a.leaflet-popup-close-button{color:#64748b!important;}
+.nav-btn{background:#1e293b;color:#94a3b8;border-radius:8px;padding:5px 10px;font-size:11px;font-weight:600;transition:background .15s,color .15s;border:1px solid #334155;cursor:pointer;}
+.nav-btn:hover{background:#334155;color:#e2e8f0;}
+.nav-btn.active{background:#064e3b;color:#34d399;border-color:#065f46;}
+.nav-btn.active-red{background:#450a0a;color:#f87171;border-color:#7f1d1d;}
+.nav-btn.active-sky{background:#0c2a3d;color:#38bdf8;border-color:#075985;}
+/* Timeline */
+#timeline-slider{-webkit-appearance:none;appearance:none;width:100%;height:4px;background:#1e293b;border-radius:4px;outline:none;cursor:pointer;}
+#timeline-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:16px;height:16px;border-radius:50%;background:#10b981;cursor:pointer;border:2px solid #020617;}
+/* AI Panel */
+#aiPanel{transition:max-height .4s ease,opacity .3s;}
+.ai-typing::after{content:'▌';:blink .7s step-end infinite;}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+/* Risk heatmap canvas */
+.risk-zone-label{font-size:10px;font-weight:700;color:#fca5a5;background:rgba(127,29,29,.7);padding:2px 6px;border-radius:4px;white-space:nowrap;}
+/* Route comparison */
+.route-col{border:1px solid #334155;border-radius:12px;padding:12px;background:#0f172a;}
+/* Supply gauge */
+.supply-gauge-track{height:20px;background:#1e293b;border-radius:10px;overflow:hidden;position:relative;}
+.supply-gauge-fill{height:100%;border-radius:10px;transition:width 1s ease;display:flex;align-items:center;justify-content:flex-end;padding-right:8px;}
+</style>
+</head>
+<body>
+
+<!-- TOAST -->
+<div id="toast">
+  <div id="toastInner" class="flex items-center gap-3 bg-slate-800 border border-slate-600 px-5 py-3 rounded-2xl shadow-2xl min-w-[300px] max-w-[420px]">
+    <span id="toastIcon" class="text-xl shrink-0">✅</span>
+    <div class="flex-1 min-w-0">
+      <div id="toastTitle" class="text-sm font-bold text-white"></div>
+      <div id="toastBody" class="text-xs text-slate-400 mt-0.5 leading-relaxed"></div>
+    </div>
+    <button onclick="hideToast()" class="ml-2 text-slate-500 hover:text-slate-200 text-lg leading-none shrink-0">×</button>
+  </div>
+</div>
+
+<div class="max-w-[1800px] mx-auto px-4 py-5">
+
+<!-- HEADER -->
+<header class="mb-5">
+  <div class="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4">
+    <div>
+      <div class="flex items-center gap-2 mb-1.5 flex-wrap">
+        <span class="text-[10px] font-bold tracking-widest text-emerald-400 bg-emerald-500/10 px-3 py-0.5 rounded-full border border-emerald-500/20 uppercase">🛰 GIS Command Matrix v5 ULTRA</span>
+        <span id="tankerMovingBadge" class="hidden text-[10px] font-bold tracking-wider text-sky-400 bg-sky-500/10 px-3 py-0.5 rounded-full border border-sky-500/20 animate-pulse">🚢 タンカー航行中</span>
+        <span id="scenarioBadge" class="hidden text-[10px] font-bold tracking-wider text-red-400 bg-red-500/10 px-3 py-0.5 rounded-full border border-red-500/20 animate-pulse">⚠ 停止シナリオ発動中</span>
+        <span id="riskBadge" class="hidden text-[10px] font-bold tracking-wider text-amber-400 bg-amber-500/10 px-3 py-0.5 rounded-full border border-amber-500/20">🔴 リスクゾーン表示中</span>
+      </div>
+      <h1 class="text-2xl lg:text-3xl font-black tracking-tight text-white leading-tight">日本国内製油所 総合統合コマンドセンター</h1>
+      <p class="text-slate-500 text-xs mt-1">リスク分析 / 停止シナリオ / 需給計算 / 航路比較 / タイムライン / AI解説 完全統合版</p>
+    </div>
+    <div class="flex flex-wrap gap-3">
+      <div class="bg-slate-900/80 border border-slate-800 rounded-2xl px-4 py-3 glow-emerald min-w-[120px]">
+        <div class="text-[9px] text-slate-500 font-bold tracking-wider uppercase">稼働拠点</div>
+        <div class="mono text-2xl font-bold text-emerald-400 mt-0.5" id="kpiActive">–</div>
+        <div class="text-[9px] text-slate-600">/ <span id="kpiTotal">–</span> 拠点</div>
+      </div>
+      <div class="bg-slate-900/80 border border-slate-800 rounded-2xl px-4 py-3 glow-sky min-w-[170px]">
+        <div class="text-[9px] text-slate-500 font-bold tracking-wider uppercase">稼働総処理能力</div>
+        <div class="mono text-2xl font-bold text-sky-400 mt-0.5" id="kpiCap">–</div>
+        <div class="text-[9px] text-slate-600">バレル / 日</div>
+      </div>
+      <div class="bg-slate-900/80 border border-slate-800 rounded-2xl px-4 py-3 min-w-[120px]">
+        <div class="text-[9px] text-slate-500 font-bold tracking-wider uppercase">修繕中</div>
+        <div class="flex items-center gap-2 mt-0.5"><span class="maint-dot"></span><span class="mono text-2xl font-bold text-amber-400" id="kpiMaint">–</span></div>
+        <div class="text-[9px] text-slate-600">拠点</div>
+      </div>
+      <div class="bg-slate-900/80 border border-slate-800 rounded-2xl px-4 py-3 min-w-[150px]" id="supplyKpiCard">
+        <div class="text-[9px] text-slate-500 font-bold tracking-wider uppercase">需給カバー率</div>
+        <div class="mono text-2xl font-bold text-violet-400 mt-0.5" id="kpiSupply">–</div>
+        <div class="text-[9px] text-slate-600">日本需要比</div>
+      </div>
+      <div id="routingPanel" class="hidden bg-emerald-950/40 border border-emerald-700/40 rounded-2xl px-4 py-3 flex items-center gap-4">
+        <div>
+          <div class="text-[9px] text-emerald-400 font-bold">🚢 中東→マラッカ経由</div>
+          <div id="routeInfoText" class="text-xs text-white font-semibold mt-0.5">計算中…</div>
+        </div>
+        <div class="w-px bg-emerald-800 h-8"></div>
+        <div class="text-center">
+          <div class="text-[9px] text-emerald-400 font-bold">距離</div>
+          <div id="routeDistance" class="mono text-base font-bold text-emerald-300 mt-0.5">–</div>
+        </div>
+        <div class="text-center">
+          <div class="text-[9px] text-emerald-400 font-bold">所要日数</div>
+          <div id="routeTime" class="mono text-base font-bold text-sky-300 mt-0.5">–</div>
+        </div>
+        <button onclick="clearRoute()" class="text-[10px] bg-red-950 text-red-400 border border-red-900 px-2.5 py-1.5 rounded-lg hover:bg-red-900 hover:text-white transition-colors font-bold">解除</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- TOOLBAR -->
+<div class="bg-slate-900/60 border border-slate-800 rounded-2xl px-4 py-3 mb-4 flex flex-wrap items-center justify-between gap-3">
+  <div class="flex flex-wrap items-center gap-1.5">
+    <span class="text-[9px] font-bold text-slate-500 mr-1 uppercase tracking-wider">エリア</span>
+    <button class="nav-btn" onclick="jumpToArea([36.5,137.5],5)">🗾 全体</button>
+    <button class="nav-btn" onclick="jumpToArea([40.5,141.2],7)">北海道・東北</button>
+    <button class="nav-btn" onclick="jumpToArea([35.5,140.0],9)">関東</button>
+    <button class="nav-btn" onclick="jumpToArea([34.9,136.7],9)">中京</button>
+    <button class="nav-btn" onclick="jumpToArea([34.5,135.4],10)">関西</button>
+    <button class="nav-btn" onclick="jumpToArea([34.0,132.5],8)">中四国九州</button>
+  </div>
+  <div class="flex items-center gap-2 flex-wrap">
+    <div class="flex items-center gap-0.5 bg-slate-950 p-1 rounded-xl border border-slate-800">
+      <button id="map-dark"      onclick="setMapStyle('dark')"      class="nav-btn active">🌃 夜間</button>
+      <button id="map-light"     onclick="setMapStyle('light')"     class="nav-btn">☀️ 昼間</button>
+      <button id="map-satellite" onclick="setMapStyle('satellite')" class="nav-btn">🛰 衛星</button>
+    </div>
+    <button onclick="drawCompanyNetwork()" class="nav-btn" id="btn-network">🏭 系列ネット</button>
+    <button onclick="toggleRiskZones()" class="nav-btn" id="btn-risk">🔴 南海トラフリスク</button>
+    <button onclick="toggleHeatmap()" class="nav-btn" id="btn-heat">🌡 処理能力ヒート</button>
+    <button onclick="openRouteCompare()" class="nav-btn" id="btn-route-cmp">⚓ 航路比較</button>
+    <button onclick="resetSystem()" class="nav-btn text-red-400 border-red-900/60 hover:bg-red-900/40 font-bold">🔄 リセット</button>
+  </div>
+</div>
+
+<!-- MAIN GRID: left charts / center map / right sidebar -->
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+
+  <!-- LEFT -->
+  <div class="lg:col-span-3 flex flex-col gap-4">
+
+    <!-- Donut -->
+    <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
+      <h3 class="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-3">📊 系列別処理能力シェア</h3>
+      <div class="h-44 flex justify-center items-center"><canvas id="capacityPie"></canvas></div>
+    </div>
+
+    <!-- Bar -->
+    <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 flex-1 min-h-[300px]">
+      <h3 class="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-3">📈 処理能力 Top 10</h3>
+      <div class="relative h-[280px]"><canvas id="capacityBar"></canvas></div>
+    </div>
+
+    <!-- Supply gauge -->
+    <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
+      <h3 class="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-3">⛽ 需給カバーゲージ</h3>
+      <div class="space-y-2">
+        <div class="supply-gauge-track">
+          <div id="supplyGaugeFill" class="supply-gauge-fill bg-gradient-to-r from-emerald-600 to-emerald-400" style="width:0%">
+            <span id="supplyGaugeLabel" class="text-[10px] font-bold text-white mono"></span>
+          </div>
+        </div>
+        <div class="text-[10px] text-slate-500">日本の石油需要: <span class="text-white font-bold">約 3,200,000 BD</span></div>
+        <div id="supplyDetail" class="text-[10px] text-slate-400 space-y-0.5"></div>
+      </div>
+    </div>
+
+    <!-- Timeline -->
+    <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">🕐 歴史タイムライン</h3>
+        <button id="timelinePlayBtn" onclick="toggleTimelinePlay()" class="nav-btn text-[9px] px-2 py-0.5">▶ 再生</button>
+      </div>
+      <input type="range" id="timeline-slider" min="0" max="6" value="6" oninput="onTimelineChange(this.value)">
+      <div class="flex justify-between text-[8px] text-slate-600 mt-1">
+        <span>1955</span><span>1970</span><span>1980</span><span>1990</span><span>2000</span><span>2010</span><span>2026</span>
+      </div>
+      <div id="timelineInfo" class="mt-3 bg-slate-950 rounded-xl p-2.5 text-[10px] text-slate-400 leading-relaxed"></div>
+    </div>
+
+    <!-- Maintenance alert -->
+    <div class="bg-amber-950/20 border border-amber-900/40 rounded-2xl p-4">
+      <h3 class="text-[9px] font-bold text-amber-500/80 uppercase tracking-wider mb-2 flex items-center gap-2"><span class="maint-dot"></span> 修繕中アラート</h3>
+      <div id="maintPanel" class="space-y-1.5 text-xs"><div class="text-slate-500">読み込み中…</div></div>
+    </div>
+
+  </div>
+
+  <!-- CENTER MAP -->
+  <div class="lg:col-span-5 xl:col-span-6">
+    <div class="bg-slate-900/30 border border-slate-800 rounded-2xl p-2 shadow-2xl">
+      <div id="map" class="border border-slate-800/60"></div>
+    </div>
+
+    <!-- Scenario panel (below map) -->
+    <div class="mt-4 bg-red-950/20 border border-red-900/40 rounded-2xl p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-[9px] font-bold text-red-400 uppercase tracking-wider flex items-center gap-2"><span class="risk-dot"></span> 停止シナリオシミュレーター</h3>
+        <div class="flex gap-1.5">
+          <button onclick="runScenario('nankai')" class="nav-btn text-[9px] text-amber-400 border-amber-900/50">🌊 南海トラフ</button>
+          <button onclick="runScenario('typhoon')" class="nav-btn text-[9px] text-sky-400 border-sky-900/50">🌀 大型台風</button>
+          <button onclick="runScenario('war')" class="nav-btn text-[9px] text-red-400 border-red-900/50">⚔ 有事想定</button>
+          <button onclick="clearScenario()" class="nav-btn text-[9px] text-slate-400">✕ 解除</button>
+        </div>
+      </div>
+      <div id="scenarioResult" class="text-[11px] text-slate-400">シナリオを選択してください。選択した災害・有事想定で影響を受ける製油所を自動特定し、残存能力を計算します。</div>
+    </div>
+
+    <!-- Route compare panel (hidden) -->
+    <div id="routeComparePanel" class="hidden mt-4 bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-[9px] font-bold text-slate-400 uppercase tracking-wider">⚓ マラッカ vs スエズ 航路比較</h3>
+        <button onclick="closeRouteCompare()" class="text-slate-500 hover:text-white text-sm">✕</button>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div class="route-col">
+          <div class="text-[10px] font-bold text-sky-400 mb-2">🌊 マラッカ海峡経由</div>
+          <div class="space-y-1.5 text-[10px] text-slate-300">
+            <div class="flex justify-between"><span class="text-slate-500">総距離</span><span class="mono font-bold">約 12,000 km</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">所要日数 (15kt)</span><span class="mono font-bold text-sky-400">約 18 日</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">通行量</span><span class="mono font-bold">年間 94,000 隻</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">日本の原油依存度</span><span class="mono font-bold text-emerald-400">約 80%</span></div>
+            <div class="mt-2 text-[9px] text-slate-500 leading-relaxed">世界最重要の原油輸送ルート。中東→インド洋→マラッカ→日本。チョークポイントリスク高。</div>
+          </div>
+        </div>
+        <div class="route-col">
+          <div class="text-[10px] font-bold text-amber-400 mb-2">🏔 スエズ運河経由</div>
+          <div class="space-y-1.5 text-[10px] text-slate-300">
+            <div class="flex justify-between"><span class="text-slate-500">総距離</span><span class="mono font-bold">約 21,000 km</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">所要日数 (15kt)</span><span class="mono font-bold text-amber-400">約 31 日</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">通行量</span><span class="mono font-bold">年間 19,000 隻</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">喜望峰迂回時</span><span class="mono font-bold text-red-400">+28,000 km</span></div>
+            <div class="mt-2 text-[9px] text-slate-500 leading-relaxed">欧州向けが主。中東→スエズ→地中海→大西洋→喜望峰廻り。距離と日数で割高。</div>
+          </div>
+        </div>
+      </div>
+      <div class="mt-3 bg-slate-950 rounded-xl p-2.5 text-[10px] text-slate-400">
+        💡 <strong class="text-white">戦略的意義:</strong> 日本の原油輸入の約87%が中東依存。マラッカ海峡閉鎖は即座に国内石油危機を引き起こすため、製油所の分散立地と備蓄管理が国家安全保障の要。
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT SIDEBAR -->
+  <div class="lg:col-span-4 xl:col-span-3 flex flex-col" style="height:700px;">
+    <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 flex flex-col h-full overflow-hidden">
+
+      <!-- Search -->
+      <div class="relative mb-3">
+        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">🔍</span>
+        <input type="text" id="sidebarSearch" oninput="handleSearch()" placeholder="製油所名・都市・系列で検索…"
+               class="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-4 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 transition text-white placeholder-slate-600">
+      </div>
+
+      <!-- Sort -->
+      <div class="flex items-center justify-between mb-3">
+        <span class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">並び替え</span>
+        <div class="flex gap-1">
+          <button id="sort-cap-desc" onclick="changeSort('cap-desc')" class="px-2 py-0.5 rounded text-[9px] font-bold bg-emerald-600 text-white">大→小</button>
+          <button id="sort-cap-asc"  onclick="changeSort('cap-asc')"  class="px-2 py-0.5 rounded text-[9px] font-bold bg-slate-800 text-slate-400 hover:bg-slate-700">小→大</button>
+          <button id="sort-north"    onclick="changeSort('north')"    class="px-2 py-0.5 rounded text-[9px] font-bold bg-slate-800 text-slate-400 hover:bg-slate-700">北→南</button>
+        </div>
+      </div>
+
+      <!-- Filter -->
+      <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-3 mb-3">
+        <div class="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-2">系列フィルター</div>
+        <div class="grid grid-cols-2 gap-y-1.5 gap-x-3">
+          <label class="flex items-center gap-2 text-[10px] text-slate-300 cursor-pointer"><input type="checkbox" class="company-filter accent-orange-500" value="ENEOS" checked><span class="w-2 h-2 rounded-full bg-orange-500 shrink-0"></span>ENEOS</label>
+          <label class="flex items-center gap-2 text-[10px] text-slate-300 cursor-pointer"><input type="checkbox" class="company-filter accent-red-500" value="出光興産" checked><span class="w-2 h-2 rounded-full bg-red-500 shrink-0"></span>出光興産</label>
+          <label class="flex items-center gap-2 text-[10px] text-slate-300 cursor-pointer"><input type="checkbox" class="company-filter accent-blue-500" value="コスモ石油" checked><span class="w-2 h-2 rounded-full bg-blue-500 shrink-0"></span>コスモ石油</label>
+          <label class="flex items-center gap-2 text-[10px] text-slate-300 cursor-pointer"><input type="checkbox" class="company-filter accent-purple-500" value="その他" checked><span class="w-2 h-2 rounded-full bg-purple-500 shrink-0"></span>その他</label>
+        </div>
+      </div>
+
+      <!-- Stats -->
+      <div id="statsPanel" class="bg-slate-950 border border-slate-800 rounded-xl p-3 mb-3 text-xs space-y-2.5"></div>
+
+      <!-- AI Panel -->
+      <div class="bg-violet-950/20 border border-violet-900/30 rounded-xl p-3 mb-3">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-[9px] font-bold text-violet-400 uppercase tracking-wider">🤖 AI解説アシスタント</h3>
+          <span class="text-[8px] text-violet-600">製油所を選択して質問</span>
+        </div>
+        <div id="aiPanel" class="text-[10px] text-slate-400 leading-relaxed min-h-[40px]">製油所カードをクリックすると、その拠点についてAIが解説します。</div>
+        <div id="aiLoading" class="hidden text-[10px] text-violet-400 ai-typing mt-1">解説を生成中</div>
+      </div>
+
+      <!-- List -->
+      <div id="sidebarList" class="overflow-y-auto flex-1 space-y-2 scroll-thin pr-0.5"></div>
+    </div>
+  </div>
+
+</div><!-- /main grid -->
+</div><!-- /container -->
+
+<script>
+// ═══════════════════════════════════════════════════════
+//  DATA
+// ═══════════════════════════════════════════════════════
+const initialData = [
+  {id:1, name:"北海道製油所",  company:"出光興産", displayComp:"出光興産",       location:"北海道苫小牧市真砂町",       capacity:"140,000", lat:42.6391,lng:141.7225,color:"#ef4444",status:"active",founded:1973,notes:"出光の主力拠点。北海道唯一の製油所。苫小牧港に隣接し海上輸送に優位。"},
+  {id:2, name:"仙台製油所",    company:"ENEOS",   displayComp:"ENEOS",          location:"宮城県仙台市宮城野区港",     capacity:"145,000", lat:38.2778,lng:141.0264,color:"#f97316",status:"active",founded:1961,notes:"東北最大の製油所。東日本大震災で被災し2012年に操業再開。防災対策が強化されている。"},
+  {id:3, name:"鹿島製油所",    company:"その他",   displayComp:"鹿島石油",        location:"茨城県神栖市東和田",         capacity:"210,100", lat:35.9189,lng:140.6725,color:"#a855f7",status:"active",founded:1971,notes:"鹿島コンビナート内に立地。ENEOS・三菱系の鹿島石油が運営。関東圏への供給基盤。"},
+  {id:4, name:"千葉製油所",    company:"コスモ石油",displayComp:"コスモ石油",     location:"千葉県市原市海岸通",         capacity:"177,000", lat:35.5397,lng:140.0652,color:"#3b82f6",status:"active",founded:1963,notes:"千葉臨海工業地帯の中核。コスモ石油の最大拠点。石油化学コンビナートと一体化。"},
+  {id:5, name:"千葉製油所",    company:"その他",   displayComp:"大阪国際石油精製", location:"千葉県市原市五井海岸",       capacity:"129,000", lat:35.5292,lng:140.0521,color:"#a855f7",status:"maintenance",founded:1966,notes:"ORPIC（大阪国際石油精製）が運営。現在定期修繕中。五井コンビナート内に位置。"},
+  {id:6, name:"千葉事業所",    company:"出光興産", displayComp:"出光興産",        location:"千葉県市原市姉崎海岸",       capacity:"195,000", lat:35.4831,lng:140.0242,color:"#ef4444",status:"active",founded:1964,notes:"出光興産の関東主力拠点。姉崎海岸に立地し東京湾へのアクセスが良好。石化製品も製造。"},
+  {id:7, name:"袖ヶ浦製油所",  company:"その他",   displayComp:"富士石油",        location:"千葉県袖ケ浦市北袖",         capacity:"143,000", lat:35.4608,lng:139.9822,color:"#a855f7",status:"active",founded:1963,notes:"富士石油が運営。アラビア石油と提携歴あり。東京湾岸の戦略的立地で関東向け供給担当。"},
+  {id:8, name:"川崎製油所",    company:"ENEOS",   displayComp:"ENEOS",          location:"神奈川県川崎市川崎区扇町",   capacity:"249,100", lat:35.5036,lng:139.7289,color:"#f97316",status:"active",founded:1959,notes:"国内最大級のENEOS拠点。京浜工業地帯の核心。東京・横浜への安定供給を担う戦略拠点。"},
+  {id:9, name:"京浜製油所",    company:"その他",   displayComp:"東亜石油",        location:"神奈川県川崎市川崎区水江町", capacity:"70,000",  lat:35.5133,lng:139.7501,color:"#a855f7",status:"active",founded:1955,notes:"東亜石油（ENEOS系）が運営。京浜地区最古参の製油所のひとつ。小規模ながら安定稼働。"},
+  {id:10,name:"根岸製油所",    company:"ENEOS",   displayComp:"ENEOS",          location:"神奈川県横浜市磯子区鳳町",   capacity:"153,000", lat:35.4144,lng:139.6433,color:"#f97316",status:"active",founded:1961,notes:"横浜根岸湾に立地。ENEOSの主要拠点で航空燃料（ジェット燃料）生産比率が高い。"},
+  {id:11,name:"愛知事業所",    company:"出光興産", displayComp:"出光興産",        location:"愛知県知多市南浜町",         capacity:"165,000", lat:34.9669,lng:136.8344,color:"#ef4444",status:"active",founded:1962,notes:"出光興産の中部主力拠点。知多半島の伊勢湾岸に立地。自動車産業集積地への供給を担う。"},
+  {id:12,name:"四日市製油所",  company:"コスモ石油",displayComp:"コスモ石油",     location:"三重県四日市市大正町",       capacity:"86,000",  lat:34.9622,lng:136.6431,color:"#3b82f6",status:"active",founded:1964,notes:"四日市コンビナートの一角。コスモ石油が運営。伊勢湾に面し中部・近畿圏への供給拠点。"},
+  {id:13,name:"四日市製油所",  company:"その他",   displayComp:"昭和四日市石油",  location:"三重県四日市市塩浜町",       capacity:"255,000", lat:34.9458,lng:136.6389,color:"#a855f7",status:"maintenance",founded:1960,notes:"昭和四日市石油（ENEOS・出光系）が運営。四日市公害発祥地の近隣だが現在は最先端設備を誇る。定期修繕中。"},
+  {id:14,name:"堺製油所",      company:"コスモ石油",displayComp:"コスモ石油",     location:"大阪府堺市西区築港新町",     capacity:"100,000", lat:34.5664,lng:135.4219,color:"#3b82f6",status:"active",founded:1968,notes:"大阪湾に面した堺泉北臨海工業地帯に立地。コスモ石油の近畿拠点。大阪府への安定供給担当。"},
+  {id:15,name:"堺製油所",      company:"ENEOS",   displayComp:"ENEOS",          location:"大阪府堺市西区築港浜寺町",   capacity:"141,000", lat:34.5447,lng:135.4194,color:"#f97316",status:"active",founded:1961,notes:"ENEOSの近畿拠点。堺港に隣接。石化製品との複合生産体制で高い効率性を実現。"},
+  {id:16,name:"水島製油所",    company:"ENEOS",   displayComp:"ENEOS",          location:"岡山県倉敷市水島海岸通",     capacity:"350,200", lat:34.4844,lng:133.7436,color:"#f97316",status:"active",founded:1964,notes:"国内最大の処理能力を持つ超大型製油所。水島コンビナートの中核。西日本の石油供給を一手に担う。"},
+  {id:17,name:"麻里布製油所",  company:"ENEOS",   displayComp:"ENEOS",          location:"山口県玖珂郡和木町和木",     capacity:"128,000", lat:34.1911,lng:132.2272,color:"#f97316",status:"active",founded:1967,notes:"瀬戸内海に面した和木町に立地。ENEOSの山口拠点。石化製品との一体生産で中四国供給を担う。"},
+  {id:18,name:"四国事業所",    company:"その他",   displayComp:"太陽石油",        location:"愛媛県今治市菊間町種",       capacity:"138,000", lat:34.0436,lng:132.8519,color:"#a855f7",status:"active",founded:1970,notes:"太陽石油が運営。四国で唯一の製油所。今治沖の燧灘に面し離島・四国全域への安定供給を使命とする。"},
+  {id:19,name:"大分製油所",    company:"ENEOS",   displayComp:"ENEOS",          location:"大分県大分市大字一の洲",     capacity:"136,000", lat:33.2647,lng:131.6744,color:"#f97316",status:"active",founded:1972,notes:"大分臨海工業地帯に立地。ENEOSの九州拠点。新日本製鐵大分製鉄所とコンビナートを形成。"}
+];
+
+const malaccaWaypoints = [
+  [26.640,50.160],[12.500,52.000],[6.500,79.800],[5.500,95.000],[1.280,103.830],
+  [4.650,109.500],[12.300,114.000],[18.500,119.500],[22.200,124.000],[27.000,129.500],[31.500,134.200]
+];
+
+// 南海トラフ想定震源エリア（ポリゴン簡易）
+const nankaiRiskZone = [[33.5,130.0],[32.0,131.5],[31.0,133.0],[31.5,135.0],[32.5,136.0],[33.5,137.0],[34.5,137.5],[35.0,136.0],[35.0,134.5],[34.0,132.5],[33.5,130.0]];
+
+// タイムラインデータ
+const timelineData = [
+  {year:1955, label:"戦後復興期", active:[9], note:"敗戦後の石油産業再建。東亜石油（京浜）など戦前からの施設が稼働再開。米系石油メジャーとの提携が始まる。"},
+  {year:1970, label:"高度経済成長期", active:[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19], note:"石油需要が急拡大。19拠点がほぼ出揃い国内精製能力がピーク（約590万BD）に達する。石油コンビナートが各地に建設される。"},
+  {year:1980, label:"石油危機後", active:[1,2,3,4,6,7,8,9,10,11,12,13,14,15,16,17,18,19], note:"1973・1979年の2度のオイルショックで省エネ化が進む。設備過剰により一部拠点が縮小・閉鎖。精製能力の合理化が始まる。"},
+  {year:1990, label:"バブル経済期", active:[1,2,3,4,6,7,8,9,10,11,12,13,14,15,16,17,18,19], note:"バブル景気で石油需要が底堅く推移。各社が高度化設備への投資を継続。ただし輸入石油製品との競合が始まる。"},
+  {year:2000, label:"再編・統合期", active:[1,2,3,4,5,6,7,8,9,10,11,12,14,15,16,17,18,19], note:"新日本石油・共同石油統合でJOMOが誕生。出光・昭和シェルの合併準備開始。業界再編が加速。"},
+  {year:2010, label:"東日本大震災前後", active:[1,3,4,5,6,7,8,9,10,11,12,14,15,16,17,18,19], note:"2011年震災で仙台製油所が壊滅的被害。東北への供給が途絶し燃料危機が発生。製油所の耐震・BCP対策が急務に。"},
+  {year:2026, label:"現在", active:[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19], note:"出光興産・コスモ石油・ENEOSの3大グループに集約。脱炭素化対応として水素・SAF製造への転換投資が進む。"}
+];
+
+// シナリオ定義
+const scenarios = {
+  nankai: {
+    label:"南海トラフ地震（M9.0想定）",
+    icon:"🌊",
+    affected:[11,12,13,14,15,16,17,18,19],
+    desc:"紀伊半島沖〜四国沖を震源とするM9.0規模の地震・津波が発生。太平洋沿岸の製油所に甚大な被害。"
+  },
+  typhoon: {
+    label:"大型台風直撃（九州〜近畿）",
+    icon:"🌀",
+    affected:[14,15,16,17,18,19],
+    desc:"最大風速70m/sの大型台風が九州から近畿を直撃。西日本太平洋側の製油所が操業停止を余儀なくされる。"
+  },
+  war: {
+    label:"有事想定（マラッカ封鎖）",
+    icon:"⚔",
+    affected:[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19],
+    desc:"地政学的緊張によりマラッカ海峡が封鎖。中東からの原油輸入が全面停止。備蓄量（約180日分）のみで対応。"
+  }
+};
+
+// ─── STATE ─────────────────────────────────────────────
+let refineriesData = JSON.parse(JSON.stringify(initialData));
+let markersGroup, polylineRoute, mapTileLayer, map;
+let markersMap = {}, networkLines = [], riskLayers = [], heatLayers = [];
+let tankerMarker = null, tankerInterval = null;
+let searchQuery = "", currentSort = "cap-desc";
+let activeCompanies = ["ENEOS","出光興産","コスモ石油","その他"];
+let pieChart = null, barChart = null;
+let activeScenario = null, scenarioLayer = null;
+let riskVisible = false, heatVisible = false;
+let timelinePlaying = false, timelineTimer = null;
+let selectedRefineryForAI = null;
+
+const JAPAN_DEMAND = 3200000;
+
+const mapStyles = {
+  dark:      "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+  light:     "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
+  satellite: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+};
+
+// ─── INIT ───────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  initMap();
+  initCharts();
+  document.querySelectorAll('.company-filter').forEach(cb=>cb.addEventListener('change',handleFilterChange));
+  onTimelineChange(6);
+  syncAll();
+});
+
+function initMap() {
+  map = L.map('map').setView([36.5,137.5],5);
+  mapTileLayer = L.tileLayer(mapStyles.dark,{attribution:'© CARTO © ESRI',maxZoom:19}).addTo(map);
+  markersGroup = L.layerGroup().addTo(map);
+  polylineRoute = L.polyline([],{color:'#38bdf8',weight:3.5,dashArray:'7 6',opacity:.85}).addTo(map);
+}
+
+function setMapStyle(s) {
+  mapTileLayer.setUrl(mapStyles[s]);
+  ['dark','light','satellite'].forEach(x=>{const b=document.getElementById(`map-${x}`);if(b)b.className=x===s?'nav-btn active':'nav-btn';});
+}
+
+// ─── TOAST ─────────────────────────────────────────────
+let toastTimer;
+function showToast(icon,title,body,ms=4500){
+  document.getElementById('toastIcon').textContent=icon;
+  document.getElementById('toastTitle').textContent=title;
+  document.getElementById('toastBody').textContent=body;
+  document.getElementById('toast').classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(hideToast,ms);
+}
+function hideToast(){document.getElementById('toast').classList.remove('show');}
+
+// ─── HELPER ────────────────────────────────────────────
+function cap(item){return parseInt(item.capacity.replace(/,/g,''));}
+
+// ─── SYNC ──────────────────────────────────────────────
+function syncAll(){
+  let data=refineriesData.filter(x=>{
+    const sm=x.name.includes(searchQuery)||x.location.includes(searchQuery)||x.displayComp.includes(searchQuery);
+    return sm&&activeCompanies.includes(x.company);
+  });
+  if(currentSort==='cap-desc')data.sort((a,b)=>cap(b)-cap(a));
+  else if(currentSort==='cap-asc')data.sort((a,b)=>cap(a)-cap(b));
+  else if(currentSort==='north')data.sort((a,b)=>b.lat-a.lat);
+  plotMarkers(data);
+  renderList(data);
+  renderStats(data);
+  renderMaintPanel();
+  refreshCharts();
+  updateKPIs(data);
+  updateSupplyGauge(data);
+}
+
+// ─── KPI ───────────────────────────────────────────────
+function updateKPIs(data){
+  const active=data.filter(x=>x.status==='active');
+  const maint=refineriesData.filter(x=>x.status==='maintenance').length;
+  const totalCap=active.reduce((s,x)=>s+cap(x),0);
+  const pct=Math.round(totalCap/JAPAN_DEMAND*100);
+  document.getElementById('kpiActive').textContent=active.length;
+  document.getElementById('kpiTotal').textContent=data.length;
+  document.getElementById('kpiCap').textContent=totalCap.toLocaleString();
+  document.getElementById('kpiMaint').textContent=maint;
+  document.getElementById('kpiSupply').textContent=pct+'%';
+}
+
+// ─── SUPPLY GAUGE ──────────────────────────────────────
+function updateSupplyGauge(data){
+  const active=data.filter(x=>x.status==='active');
+  const totalCap=active.reduce((s,x)=>s+cap(x),0);
+  const pct=Math.min(Math.round(totalCap/JAPAN_DEMAND*100),120);
+  const fill=document.getElementById('supplyGaugeFill');
+  const label=document.getElementById('supplyGaugeLabel');
+  fill.style.width=Math.min(pct,100)+'%';
+  fill.style.background=pct>=100?'linear-gradient(90deg,#10b981,#34d399)':pct>=70?'linear-gradient(90deg,#f59e0b,#fbbf24)':'linear-gradient(90deg,#ef4444,#f87171)';
+  label.textContent=pct+'%';
+  const surplus=totalCap-JAPAN_DEMAND;
+  document.getElementById('supplyDetail').innerHTML=`
+    <div>稼働能力: <span class="text-white font-bold mono">${totalCap.toLocaleString()}</span> BD</div>
+    <div>日本需要: <span class="text-white font-bold mono">${JAPAN_DEMAND.toLocaleString()}</span> BD</div>
+    <div>${surplus>=0?'余剰':'不足'}: <span class="${surplus>=0?'text-emerald-400':'text-red-400'} font-bold mono">${Math.abs(surplus).toLocaleString()}</span> BD</div>
+  `;
+}
+
+// ─── MAP MARKERS ───────────────────────────────────────
+function plotMarkers(visibleData){
+  markersGroup.clearLayers();
+  markersMap={};
+  visibleData.forEach(item=>{
+    const r=7+cap(item)/65000;
+    const isMaint=item.status==='maintenance';
+    const isAffected=activeScenario&&scenarios[activeScenario]&&scenarios[activeScenario].affected.includes(item.id);
+    const fillColor=isAffected?'#dc2626':isMaint?'#475569':item.color;
+
+    const circle=L.circleMarker([item.lat,item.lng],{
+      radius:r,fillColor,color:'#0f172a',weight:1.5,opacity:1,fillOpacity:isMaint?0.3:0.8
+    });
+
+    if(!isMaint){
+      const ring=L.circleMarker([item.lat,item.lng],{
+        radius:r+7,fillColor:'transparent',
+        color:isAffected?'#dc2626':item.color,weight:1,opacity:.35,className:'pulse-marker'
+      });
+      markersGroup.addLayer(ring);
+    }
+
+    const statusBadge=isMaint
+      ?`<span style="background:#422006;color:#fbbf24;font-size:9px;font-weight:700;padding:1px 8px;border-radius:99px;border:1px solid #713f12">⚠ 定期修繕中</span>`
+      :isAffected
+        ?`<span style="background:#450a0a;color:#f87171;font-size:9px;font-weight:700;padding:1px 8px;border-radius:99px;border:1px solid #7f1d1d">🔴 シナリオ被影響</span>`
+        :`<span style="background:#052e16;color:#34d399;font-size:9px;font-weight:700;padding:1px 8px;border-radius:99px;border:1px solid #065f46">● 通常稼働</span>`;
+
+    const barW=Math.round(cap(item)/3502);
+    const popup=`
+      <div style="font-family:'Noto Sans JP',sans-serif;padding:14px;width:250px;color:#e2e8f0">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="font-size:10px;color:#64748b;font-weight:700">${item.displayComp}</span>${statusBadge}
+        </div>
+        <div style="font-size:15px;font-weight:900;color:#fff;margin-bottom:4px">${item.name}</div>
+        <div style="font-size:10px;color:#64748b;margin-bottom:6px">📍 ${item.location}</div>
+        <div style="font-size:9px;color:#64748b;margin-bottom:10px;line-height:1.5">${item.notes||''}</div>
+        <div style="background:#1e293b;border-radius:8px;padding:8px 10px;margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
+            <span style="font-size:9px;color:#64748b;font-weight:700">処理能力</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:#38bdf8">${item.capacity} <span style="font-size:9px;color:#64748b">BD</span></span>
+          </div>
+          <div style="height:3px;background:#0f172a;border-radius:99px;overflow:hidden">
+            <div style="height:100%;width:${barW}%;background:${fillColor};border-radius:99px"></div>
+          </div>
+        </div>
+        <button onclick="startMalacca(${item.id})" style="width:100%;background:#0c4a6e;color:#7dd3fc;border:1px solid #075985;border-radius:8px;padding:7px;font-size:10px;font-weight:700;cursor:pointer;margin-bottom:6px">🚢 マラッカ航路シミュレート</button>
+        <button onclick="fetchAIExplanation(${item.id})" style="width:100%;background:#3b0764;color:#c4b5fd;border:1px solid #4c1d95;border-radius:8px;padding:7px;font-size:10px;font-weight:700;cursor:pointer;margin-bottom:6px">🤖 AIに解説させる</button>
+        <a href="https://maps.google.com/?q=${item.lat},${item.lng}" target="_blank" style="display:block;text-align:center;background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:8px;padding:6px;font-size:10px;font-weight:700;text-decoration:none">🗺 Google マップで開く</a>
+      </div>`;
+    circle.bindPopup(popup,{maxWidth:270});
+    circle.on('click',()=>highlightCard(item.id));
+    markersGroup.addLayer(circle);
+    markersMap[item.id]=circle;
+  });
+}
+
+// ─── LIST ──────────────────────────────────────────────
+function renderList(data){
+  const el=document.getElementById('sidebarList');
+  if(!data.length){el.innerHTML=`<div class="text-center text-xs text-slate-500 py-10">該当する製油所がありません</div>`;return;}
+  el.innerHTML='';
+  data.forEach(item=>{
+    const isMaint=item.status==='maintenance';
+    const isAffected=activeScenario&&scenarios[activeScenario]&&scenarios[activeScenario].affected.includes(item.id);
+    const d=document.createElement('div');
+    d.id=`card-${item.id}`;
+    d.className=`refinery-card border rounded-xl p-3 cursor-pointer flex justify-between items-start ${isAffected?'bg-red-950/20 border-red-900/40':isMaint?'bg-slate-900/20 border-slate-900 opacity-55':'bg-slate-900/60 border-slate-800'}`;
+    d.onclick=()=>focusRefinery(item.id,item.lat,item.lng);
+    const badge=isMaint
+      ?`<button onclick="toggleStatus(${item.id},event)" class="text-[8px] font-bold bg-amber-950/50 text-amber-400 border border-amber-900/50 px-1.5 py-0.5 rounded">修繕中⇄</button>`
+      :isAffected
+        ?`<span class="text-[8px] font-bold text-red-400 px-1.5 py-0.5 rounded bg-red-950/50 border border-red-900/50">⚠ 被影響</span>`
+        :`<button onclick="toggleStatus(${item.id},event)" class="text-[8px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded">稼働中⇄</button>`;
+    d.innerHTML=`
+      <div class="space-y-1 flex-1 min-w-0">
+        <div class="flex items-center gap-1.5 flex-wrap">
+          <span class="w-1.5 h-1.5 rounded-full shrink-0" style="background:${isAffected?'#dc2626':isMaint?'#475569':item.color}"></span>
+          <span class="text-[9px] font-bold text-slate-500">${item.displayComp}</span>${badge}
+        </div>
+        <h4 class="text-[12px] font-bold leading-tight ${isMaint?'text-slate-500 line-through':isAffected?'text-red-300':'text-white'}">${item.name}</h4>
+        <p class="text-[9px] text-slate-600 truncate">📍 ${item.location}</p>
+      </div>
+      <div class="text-right mono shrink-0 ml-2">
+        <span class="text-[11px] font-bold ${isMaint||isAffected?'text-slate-600':'text-sky-400'} block">${item.capacity}</span>
+        <span class="text-[8px] text-slate-600">BD</span>
+      </div>`;
+    el.appendChild(d);
+  });
+}
+
+// ─── STATS PANEL ───────────────────────────────────────
+function renderStats(data){
+  const active=data.filter(x=>x.status==='active');
+  const totalCap=active.reduce((s,x)=>s+cap(x),0);
+  const sums={ENEOS:0,'出光興産':0,'コスモ石油':0,'その他':0};
+  active.forEach(x=>{if(sums[x.company]!==undefined)sums[x.company]+=cap(x);});
+  const top3=[...active].sort((a,b)=>cap(b)-cap(a)).slice(0,3);
+  const colors={ENEOS:'#f97316','出光興産':'#ef4444','コスモ石油':'#3b82f6','その他':'#a855f7'};
+  document.getElementById('statsPanel').innerHTML=`
+    <div class="flex items-end justify-between">
+      <div>
+        <div class="text-[9px] text-slate-500 font-bold uppercase tracking-wider">稼働総処理能力</div>
+        <div class="mono text-xl font-black text-emerald-400 mt-0.5">${totalCap.toLocaleString()} <span class="text-[9px] font-normal text-slate-500">BD</span></div>
+      </div>
+    </div>
+    <div class="border-t border-slate-900 pt-2 space-y-2">
+      ${Object.entries(sums).map(([k,v])=>{const pct=totalCap>0?Math.round(v/totalCap*100):0;return`
+        <div><div class="flex justify-between text-[9px] mb-1"><span style="color:${colors[k]}">${k}</span><span class="mono text-slate-300 font-bold">${v.toLocaleString()} <span class="text-slate-600">${pct}%</span></span></div>
+        <div class="stat-bar-track"><div class="stat-bar-fill" style="width:${pct}%;background:${colors[k]}"></div></div></div>`;}).join('')}
+    </div>
+    <div class="border-t border-slate-900 pt-2">
+      <div class="text-[9px] text-slate-500 font-bold uppercase tracking-wider mb-1.5">🏆 Top 3</div>
+      ${top3.map((r,i)=>`<div class="flex justify-between text-[9px] py-0.5"><span class="text-slate-500">${['🥇','🥈','🥉'][i]} ${r.name}</span><span class="mono text-sky-400 font-bold">${r.capacity}</span></div>`).join('')}
+    </div>`;
+}
+
+// ─── MAINT PANEL ───────────────────────────────────────
+function renderMaintPanel(){
+  const m=refineriesData.filter(x=>x.status==='maintenance');
+  const el=document.getElementById('maintPanel');
+  el.innerHTML=m.length===0?`<div class="text-slate-600 text-[10px]">修繕中の拠点なし</div>`:m.map(x=>`
+    <div class="flex justify-between items-center bg-amber-950/20 border border-amber-900/20 rounded-lg px-2 py-1.5 cursor-pointer hover:bg-amber-950/40 transition-colors" onclick="focusRefinery(${x.id},${x.lat},${x.lng})">
+      <div><div class="text-[10px] font-bold text-amber-300">${x.name}</div><div class="text-[8px] text-slate-500">${x.displayComp}</div></div>
+      <span class="text-[9px] text-amber-500 mono">${x.capacity} BD</span>
+    </div>`).join('');
+}
+
+// ─── CHARTS ────────────────────────────────────────────
+function initCharts(){
+  pieChart=new Chart(document.getElementById('capacityPie').getContext('2d'),{
+    type:'doughnut',
+    data:{labels:['ENEOS','出光興産','コスモ石油','その他'],datasets:[{data:[0,0,0,0],backgroundColor:['#f97316','#ef4444','#3b82f6','#a855f7'],borderWidth:2,borderColor:'#020617',hoverOffset:6}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{position:'bottom',labels:{color:'#64748b',font:{size:9},padding:8}}}}
+  });
+  barChart=new Chart(document.getElementById('capacityBar').getContext('2d'),{
+    type:'bar',
+    data:{labels:[],datasets:[{label:'処理能力 BD',data:[],backgroundColor:'#10b981',borderRadius:4}]},
+    options:{
+      indexAxis:'y',responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{x:{grid:{color:'#1e293b'},ticks:{color:'#475569',font:{size:8}}},y:{grid:{display:false},ticks:{color:'#94a3b8',font:{size:9}}}},
+      onClick(evt,els){
+        if(!els.length)return;
+        const label=barChart.data.labels[els[0].index];
+        const found=refineriesData.find(x=>x.name===label&&activeCompanies.includes(x.company));
+        if(found)focusRefinery(found.id,found.lat,found.lng);
+      }
+    }
+  });
+}
+
+function refreshCharts(){
+  const ds=refineriesData.filter(x=>{const sm=x.name.includes(searchQuery)||x.location.includes(searchQuery)||x.displayComp.includes(searchQuery);return sm&&activeCompanies.includes(x.company);});
+  const sums={ENEOS:0,'出光興産':0,'コスモ石油':0,'その他':0};
+  ds.forEach(x=>{sums[x.company]+=(x.status==='active'?cap(x):0);});
+  pieChart.data.datasets[0].data=[sums.ENEOS,sums['出光興産'],sums['コスモ石油'],sums['その他']];
+  pieChart.update('none');
+  const top10=[...ds].sort((a,b)=>(b.status==='active'?cap(b):0)-(a.status==='active'?cap(a):0)).slice(0,10);
+  barChart.data.labels=top10.map(x=>x.name);
+  barChart.data.datasets[0].data=top10.map(x=>x.status==='active'?cap(x):0);
+  barChart.data.datasets[0].backgroundColor=top10.map(x=>x.status==='active'?x.color:'#334155');
+  barChart.update('none');
+}
+
+// ─── RISK ZONES ────────────────────────────────────────
+function toggleRiskZones(){
+  riskVisible=!riskVisible;
+  const btn=document.getElementById('btn-risk');
+  if(riskVisible){
+    // 南海トラフポリゴン
+    const poly=L.polygon(nankaiRiskZone,{color:'#dc2626',weight:1.5,opacity:.7,fillColor:'#dc2626',fillOpacity:.12,dashArray:'4 4'}).addTo(map);
+    // 津波浸水想定（主要太平洋沿岸都市）
+    const tsunamiPoints=[{lat:33.5,lng:131.8,label:"大分沿岸"},{lat:33.2,lng:131.6,label:"大分市"},{lat:34.0,lng:132.8,label:"愛媛沿岸"},{lat:34.4,lng:133.7,label:"水島"},{lat:34.5,lng:135.4,label:"堺・大阪湾"},{lat:34.9,lng:136.6,label:"四日市"},{lat:34.9,lng:136.8,label:"名古屋南部"}];
+    const tLayers=tsunamiPoints.map(p=>{
+      const c=L.circleMarker([p.lat,p.lng],{radius:18,color:'#fca5a5',weight:1,opacity:.5,fillColor:'#ef4444',fillOpacity:.08}).addTo(map);
+      return c;
+    });
+    riskLayers=[poly,...tLayers];
+    document.getElementById('riskBadge').classList.remove('hidden');
+    btn.className='nav-btn active-red';
+    showToast('🔴','南海トラフリスクゾーン表示','想定震源域（ポリゴン）と主要被影響拠点（円）を地図に表示しました。南海トラフM9.0想定。');
+    map.flyTo([33.5,135.0],6,{animate:true,duration:1.5});
+  } else {
+    riskLayers.forEach(l=>map.removeLayer(l));
+    riskLayers=[];
+    document.getElementById('riskBadge').classList.add('hidden');
+    btn.className='nav-btn';
+  }
+}
+
+// ─── HEATMAP ───────────────────────────────────────────
+function toggleHeatmap(){
+  heatVisible=!heatVisible;
+  const btn=document.getElementById('btn-heat');
+  if(heatVisible){
+    heatLayers=refineriesData.filter(x=>x.status==='active').map(item=>{
+      const r=Math.min(60,Math.max(20,cap(item)/8000));
+      const opacity=Math.min(0.35,cap(item)/1000000);
+      const c=L.circleMarker([item.lat,item.lng],{
+        radius:r,fillColor:'#f59e0b',color:'none',weight:0,fillOpacity:opacity,interactive:false
+      }).addTo(map);
+      return c;
+    });
+    btn.className='nav-btn active-sky';
+    showToast('🌡','処理能力ヒートマップ表示','稼働中の各製油所の処理能力を円の大きさと色の濃さで表現しています。');
+  } else {
+    heatLayers.forEach(l=>map.removeLayer(l));
+    heatLayers=[];
+    btn.className='nav-btn';
+  }
+}
+
+// ─── SCENARIOS ─────────────────────────────────────────
+function runScenario(type){
+  clearScenario();
+  activeScenario=type;
+  const s=scenarios[type];
+  // 影響拠点を停止状態に
+  s.affected.forEach(id=>{
+    const t=refineriesData.find(x=>x.id===id);
+    if(t)t.status='maintenance';
+  });
+  // 地図にオーバーレイ
+  if(type==='nankai'){
+    scenarioLayer=L.polygon(nankaiRiskZone,{color:'#fbbf24',weight:2,opacity:.8,fillColor:'#dc2626',fillOpacity:.18,dashArray:'6 4'}).addTo(map);
+  }
+  const activeNow=refineriesData.filter(x=>x.status==='active');
+  const lostCap=s.affected.reduce((sum,id)=>{const t=initialData.find(x=>x.id===id);return sum+(t?cap(t):0);},0);
+  const remainCap=activeNow.reduce((sv,x)=>sv+cap(x),0);
+  const coverPct=Math.round(remainCap/JAPAN_DEMAND*100);
+
+  document.getElementById('scenarioBadge').classList.remove('hidden');
+  document.getElementById('scenarioResult').innerHTML=`
+    <div class="grid grid-cols-3 gap-2 mb-2">
+      <div class="bg-red-950/30 rounded-lg p-2 text-center"><div class="text-[8px] text-red-400 font-bold">停止拠点</div><div class="mono text-lg font-black text-red-300">${s.affected.length}</div></div>
+      <div class="bg-slate-950 rounded-lg p-2 text-center"><div class="text-[8px] text-slate-400 font-bold">損失能力</div><div class="mono text-lg font-black text-amber-400">${lostCap.toLocaleString()}</div></div>
+      <div class="bg-slate-950 rounded-lg p-2 text-center"><div class="text-[8px] text-slate-400 font-bold">残存カバー率</div><div class="mono text-lg font-black ${coverPct>=70?'text-emerald-400':coverPct>=50?'text-amber-400':'text-red-400'}">${coverPct}%</div></div>
+    </div>
+    <p class="text-[10px] text-slate-400 leading-relaxed">${s.icon} <strong class="text-white">${s.label}</strong>: ${s.desc}
+    <br><span class="text-${coverPct>=70?'emerald':coverPct>=50?'amber':'red'}-400 font-bold">需給カバー率 ${coverPct}% — ${coverPct>=70?'需要を維持できるが余裕なし。':coverPct>=50?'深刻な供給不足。輸入拡大・節電が必要。':'壊滅的な供給不足。緊急備蓄放出が必要。'}</span></p>`;
+  syncAll();
+  showToast(s.icon,s.label,`${s.affected.length}拠点が停止。残存カバー率: ${coverPct}%`);
+}
+
+function clearScenario(){
+  if(scenarioLayer){map.removeLayer(scenarioLayer);scenarioLayer=null;}
+  activeScenario=null;
+  refineriesData=JSON.parse(JSON.stringify(initialData));
+  document.getElementById('scenarioBadge').classList.add('hidden');
+  document.getElementById('scenarioResult').innerHTML='シナリオを選択してください。選択した災害・有事想定で影響を受ける製油所を自動特定し、残存能力を計算します。';
+  syncAll();
+}
+
+// ─── ROUTE COMPARE ────────────────────────────────────
+function openRouteCompare(){
+  document.getElementById('routeComparePanel').classList.remove('hidden');
+  document.getElementById('btn-route-cmp').className='nav-btn active-sky';
+  showToast('⚓','航路比較パネル表示','マラッカ海峡経由とスエズ運河経由の距離・日数・リスクを比較できます。');
+}
+function closeRouteCompare(){
+  document.getElementById('routeComparePanel').classList.add('hidden');
+  document.getElementById('btn-route-cmp').className='nav-btn';
+}
+
+// ─── TIMELINE ─────────────────────────────────────────
+function onTimelineChange(val){
+  const idx=parseInt(val);
+  const td=timelineData[idx];
+  document.getElementById('timelineInfo').innerHTML=`<strong class="text-white">${td.year}年 — ${td.label}</strong><br>${td.note}<br><span class="text-emerald-400 font-bold mt-1 block">稼働拠点: ${td.active.length} 拠点</span>`;
+  // 非アクティブを薄くする（簡易実装：全リセット後にactiveを使う）
+  refineriesData.forEach(x=>{
+    x.status=td.active.includes(x.id)?'active':'maintenance';
+  });
+  activeScenario=null;
+  syncAll();
+}
+
+function toggleTimelinePlay(){
+  timelinePlaying=!timelinePlaying;
+  const btn=document.getElementById('timelinePlayBtn');
+  if(timelinePlaying){
+    btn.textContent='⏸ 一時停止';
+    btn.className='nav-btn active text-[9px] px-2 py-0.5';
+    let idx=parseInt(document.getElementById('timeline-slider').value);
+    timelineTimer=setInterval(()=>{
+      idx=(idx+1)%7;
+      document.getElementById('timeline-slider').value=idx;
+      onTimelineChange(idx);
+      if(idx===6){clearInterval(timelineTimer);timelinePlaying=false;btn.textContent='▶ 再生';btn.className='nav-btn text-[9px] px-2 py-0.5';}
+    },2200);
+  } else {
+    clearInterval(timelineTimer);
+    btn.textContent='▶ 再生';
+    btn.className='nav-btn text-[9px] px-2 py-0.5';
+  }
+}
+
+// ─── AI EXPLANATION ────────────────────────────────────
+async function fetchAIExplanation(id){
+  const item=refineriesData.find(x=>x.id===id);
+  if(!item)return;
+  selectedRefineryForAI=id;
+  const panel=document.getElementById('aiPanel');
+  const loading=document.getElementById('aiLoading');
+  panel.textContent='';
+  loading.classList.remove('hidden');
+
+  // Scroll sidebar to AI panel
+  panel.scrollIntoView({behavior:'smooth',block:'nearest'});
+
+  try {
+    const resp=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model:'claude-sonnet-4-6',
+        max_tokens:1000,
+        system:'あなたは石油精製・エネルギー産業の専門家です。製油所についての簡潔でわかりやすい日本語解説を提供してください。200字以内で、歴史・立地の戦略的意義・特徴・出光興産や石油業界全体との関連性を含めて説明してください。箇条書きは使わず、読みやすい文章で。',
+        messages:[{role:'user',content:`${item.name}（${item.displayComp}）について解説してください。所在地: ${item.location}、処理能力: ${item.capacity}バレル/日。既知情報: ${item.notes}`}]
+      })
+    });
+    const data=await resp.json();
+    loading.classList.add('hidden');
+    const text=data.content?.[0]?.text||'解説を取得できませんでした。';
+    panel.textContent='';
+    // Typewriter effect
+    let i=0;
+    const timer=setInterval(()=>{
+      panel.textContent+=text[i];
+      i++;
+      if(i>=text.length)clearInterval(timer);
+    },18);
+  } catch(e){
+    loading.classList.add('hidden');
+    panel.textContent='AI解説の取得に失敗しました。APIの接続を確認してください。';
+  }
+}
+
+// ─── NETWORK ──────────────────────────────────────────
+function drawCompanyNetwork(){
+  networkLines.forEach(x=>map.removeLayer(x));networkLines=[];
+  clearRoute();
+  [['出光興産','#ef4444'],['ENEOS','#f97316'],['コスモ石油','#3b82f6']].forEach(([comp,color])=>{
+    const pts=refineriesData.filter(x=>x.company===comp).map(x=>[x.lat,x.lng]);
+    if(pts.length>1){const l=L.polyline(pts,{color,weight:2.5,opacity:.65,dashArray:'3 6'}).addTo(map);networkLines.push(l);}
+  });
+  map.flyTo([36.5,137.5],5,{animate:true,duration:1.2});
+  document.getElementById('btn-network').className='nav-btn active-sky';
+  showToast('🏭','系列ネットワーク表示','各系列の製油所間ネットワークを描画しました。');
+}
+
+// ─── MALACCA SIM ──────────────────────────────────────
+function startMalacca(id){
+  clearRoute();
+  const dest=refineriesData.find(x=>x.id===id);
+  if(!dest)return;
+  let wps=[...malaccaWaypoints];
+  if(dest.lat>36.5&&dest.lng>141.0){wps.push([34.8,140.0],[38.0,141.8]);}
+  else if(dest.lng>136.5&&dest.lng<=141.0){wps.push([34.2,138.8]);}
+  else if(dest.lat<34.0&&dest.lng<132.0){wps.push([32.2,132.5]);}
+  else{wps.push([32.8,134.0]);}
+  wps.push([dest.lat,dest.lng]);
+  const lls=wps.map(w=>L.latLng(w[0],w[1]));
+  let totalKm=0;
+  for(let i=0;i<lls.length-1;i++)totalKm+=lls[i].distanceTo(lls[i+1])/1000;
+  const days=(totalKm/27.78/24).toFixed(1);
+  document.getElementById('routingPanel').classList.remove('hidden');
+  document.getElementById('tankerMovingBadge').classList.remove('hidden');
+  document.getElementById('routeInfoText').innerHTML=`中東 → <span style="color:#fbbf24;font-weight:700">${dest.name}</span>`;
+  document.getElementById('routeDistance').innerHTML=`${Math.round(totalKm).toLocaleString()} <span style="font-size:9px;color:#64748b">km</span>`;
+  document.getElementById('routeTime').innerHTML=`${days} <span style="font-size:9px;color:#64748b">日</span>`;
+  polylineRoute.setLatLngs(lls);
+  map.fitBounds(polylineRoute.getBounds(),{padding:[60,60]});
+  tankerMarker=L.marker(lls[0],{icon:L.divIcon({html:'<div style="font-size:22px;transform:translate(-5px,-11px)">🚢</div>',className:'',iconSize:[24,24]})}).addTo(map);
+  let step=0,sub=0;const subMax=30;
+  tankerInterval=setInterval(()=>{
+    if(step>=lls.length-1){clearInterval(tankerInterval);document.getElementById('tankerMovingBadge').classList.add('hidden');showToast('⚓','入港完了',`タンカーが ${dest.name} へ入港しました。総距離 ${Math.round(totalKm).toLocaleString()} km / ${days}日`,6000);return;}
+    const s=lls[step],e=lls[step+1];
+    tankerMarker.setLatLng([s.lat+(e.lat-s.lat)*(sub/subMax),s.lng+(e.lng-s.lng)*(sub/subMax)]);
+    sub++;if(sub>subMax){sub=0;step++;}
+  },40);
+}
+
+function clearRoute(){
+  if(tankerInterval)clearInterval(tankerInterval);
+  if(tankerMarker){map.removeLayer(tankerMarker);tankerMarker=null;}
+  polylineRoute.setLatLngs([]);
+  document.getElementById('routingPanel').classList.add('hidden');
+  document.getElementById('tankerMovingBadge').classList.add('hidden');
+}
+
+// ─── INTERACTIONS ────────────────────────────────────
+function highlightCard(id){
+  document.querySelectorAll('.refinery-card').forEach(c=>c.classList.remove('active-card'));
+  const c=document.getElementById(`card-${id}`);
+  if(c){c.classList.add('active-card');c.scrollIntoView({behavior:'smooth',block:'nearest'});}
+}
+function focusRefinery(id,lat,lng){
+  map.flyTo([lat,lng],11,{animate:true,duration:1.2});
+  if(markersMap[id])setTimeout(()=>markersMap[id].openPopup(),1200);
+  highlightCard(id);
+}
+function jumpToArea(c,z){map.flyTo(c,z,{animate:true,duration:1.2});}
+function handleSearch(){searchQuery=document.getElementById('sidebarSearch').value.trim();syncAll();}
+function changeSort(t){
+  currentSort=t;
+  ['cap-desc','cap-asc','north'].forEach(s=>{const b=document.getElementById(`sort-${s}`);if(b)b.className=s===t?'px-2 py-0.5 rounded text-[9px] font-bold bg-emerald-600 text-white':'px-2 py-0.5 rounded text-[9px] font-bold bg-slate-800 text-slate-400 hover:bg-slate-700';});
+  syncAll();
+}
+function handleFilterChange(){activeCompanies=[];document.querySelectorAll('.company-filter:checked').forEach(cb=>activeCompanies.push(cb.value));syncAll();}
+function toggleStatus(id,ev){ev.stopPropagation();const t=refineriesData.find(x=>x.id===id);if(t){t.status=t.status==='active'?'maintenance':'active';syncAll();highlightCard(id);}}
+
+// ─── RESET ───────────────────────────────────────────
+function resetSystem(){
+  clearRoute();clearScenario();
+  networkLines.forEach(x=>map.removeLayer(x));networkLines=[];
+  riskLayers.forEach(x=>map.removeLayer(x));riskLayers=[];
+  heatLayers.forEach(x=>map.removeLayer(x));heatLayers=[];
+  riskVisible=false;heatVisible=false;
+  document.getElementById('btn-risk').className='nav-btn';
+  document.getElementById('btn-heat').className='nav-btn';
+  document.getElementById('btn-network').className='nav-btn';
+  document.getElementById('riskBadge').classList.add('hidden');
+  document.getElementById('routeComparePanel').classList.add('hidden');
+  document.getElementById('btn-route-cmp').className='nav-btn';
+  refineriesData=JSON.parse(JSON.stringify(initialData));
+  searchQuery='';document.getElementById('sidebarSearch').value='';
+  document.querySelectorAll('.company-filter').forEach(cb=>cb.checked=true);
+  activeCompanies=["ENEOS","出光興産","コスモ石油","その他"];
+  changeSort('cap-desc');setMapStyle('dark');
+  document.getElementById('timeline-slider').value=6;
+  onTimelineChange(6);
+  document.getElementById('aiPanel').textContent='製油所カードをクリックすると、その拠点についてAIが解説します。';
+  syncAll();
+  jumpToArea([36.5,137.5],5);
+  showToast('🔄','システムリセット完了','すべての表示・シナリオ・フィルターを初期状態に戻しました。');
+}
+</script>
+</body>
+</html>
